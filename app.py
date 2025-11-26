@@ -14,8 +14,6 @@ import numpy as np
 import pandas as pd
 import joblib
 from PIL import Image
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
-import av
 
 try:
     config = st.secrets
@@ -64,13 +62,15 @@ if 'pdf_path' not in st.session_state:
     st.session_state.pdf_path = None
 if 'wpm' not in st.session_state:
     st.session_state.wpm = 0
-if 'current_posture_status' not in st.session_state:
-    st.session_state.current_posture_status = "No data yet."
+if 'posture_result' not in st.session_state:
+    st.session_state.posture_result = None
+if 'posture_image' not in st.session_state:
+    st.session_state.posture_image = None
 
 @st.cache_resource
 def load_pose_model():
     mp_pose = mp.solutions.pose
-    pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    pose = mp_pose.Pose(static_image_mode=True, min_detection_confidence=0.5)
     return pose, mp_pose
 
 @st.cache_resource
@@ -110,63 +110,58 @@ def pdf_export(transcript, sentiment_results, filler_data, ai_feedback, wpm):
     os.makedirs(reports_dir, exist_ok=True)
     filename = os.path.join(reports_dir, f"speech_report_{int(time.time())}.pdf")
     try:
-        doc = SimpleDocTemplate(
-            filename,
-            pagesize=A4,
-            leftMargin=inch,
-            rightMargin=inch,
-            topMargin=0.75 * inch,
-            bottomMargin=0.75 * inch,
-        )
+        doc = SimpleDocTemplate(filename, pagesize=A4, leftMargin=inch, rightMargin=inch, 
+                                topMargin=0.75*inch, bottomMargin=0.75*inch)
         story = []
         styles = getSampleStyleSheet()
-        style_title = styles['Heading1']
-        style_title.alignment = 1
-        style_heading = styles['Heading2']
-        style_body = styles['Normal']
-        story.append(Paragraph("Speech Analysis Report", style_title))
-        story.append(Spacer(1, 0.25 * inch))
-        story.append(Paragraph("Speaking Rate:", style_heading))
-        story.append(Spacer(1, 0.1 * inch))
-        story.append(Paragraph(f"Words Per Minute (WPM): <b>{wpm}</b>", style_body))
-
+        
+        story.append(Paragraph("Speech Analysis Report", styles['Heading1']))
+        story.append(Spacer(1, 0.25*inch))
+        
+        story.append(Paragraph("Speaking Rate:", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
+        story.append(Paragraph(f"Words Per Minute (WPM): <b>{wpm}</b>", styles['Normal']))
+        
         if wpm < 130:
             wpm_feedback = "Your speaking pace is slow. Consider speaking slightly faster."
         elif wpm > 170:
             wpm_feedback = "Your speaking pace is fast. Consider slowing down for clarity."
         else:
             wpm_feedback = "Your speaking pace is good (ideal range: 130-170 WPM)."
-
-        story.append(Paragraph(wpm_feedback, style_body))
-        story.append(Spacer(1, 0.25 * inch))
-        story.append(Paragraph("Transcribed Text:", style_heading))
-        story.append(Spacer(1, 0.1 * inch))
-        story.append(Paragraph(transcript or "(no transcript)", style_body))
-        story.append(Spacer(1, 0.25 * inch))
-        story.append(Paragraph("Sentiment Analysis:", style_heading))
-        story.append(Spacer(1, 0.1 * inch))
+        
+        story.append(Paragraph(wpm_feedback, styles['Normal']))
+        story.append(Spacer(1, 0.25*inch))
+        
+        story.append(Paragraph("Transcribed Text:", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
+        story.append(Paragraph(transcript or "(no transcript)", styles['Normal']))
+        story.append(Spacer(1, 0.25*inch))
+        
+        story.append(Paragraph("Sentiment Analysis:", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
         if sentiment_results:
             for result in sentiment_results:
-                text_line = f'"{result.text}" &rarr; <b>{result.sentiment}</b> ({result.confidence * 100:.1f}%)'
-                story.append(Paragraph(text_line, style_body))
+                text_line = f'"{result.text}" → <b>{result.sentiment}</b> ({result.confidence*100:.1f}%)'
+                story.append(Paragraph(text_line, styles['Normal']))
         else:
-            story.append(Paragraph("No sentiment data available.", style_body))
-        story.append(Spacer(1, 0.25 * inch))
-        story.append(Paragraph("Filler Words:", style_heading))
-        story.append(Spacer(1, 0.1 * inch))
-
+            story.append(Paragraph("No sentiment data available.", styles['Normal']))
+        story.append(Spacer(1, 0.25*inch))
+        
+        story.append(Paragraph("Filler Words:", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
         if filler_data:
             for f in filler_data:
                 line = f"'{f['text']}' at {f['time']}s"
-                story.append(Paragraph(line, style_body))
+                story.append(Paragraph(line, styles['Normal']))
         else:
-            story.append(Paragraph("No filler words detected.", style_body))
-        story.append(Spacer(1, 0.25 * inch))
-        story.append(Paragraph("AI Feedback:", style_heading))
-        story.append(Spacer(1, 0.1 * inch))
-
+            story.append(Paragraph("No filler words detected.", styles['Normal']))
+        story.append(Spacer(1, 0.25*inch))
+        
+        story.append(Paragraph("AI Feedback:", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
         feedback_content = ai_feedback.replace('\n', '<br/>')
-        story.append(Paragraph(feedback_content or "(no AI feedback)", style_body))
+        story.append(Paragraph(feedback_content or "(no AI feedback)", styles['Normal']))
+        
         doc.build(story)
         return filename
     except Exception as e:
@@ -210,7 +205,6 @@ def process_audio(audio_bytes, audience, language_style, feedback_length):
     st.session_state.filler_list = filler_list
     st.session_state.ai_feedback = ai_feedback
 
-    pdf_path = None
     with st.spinner("Generating PDF report..."):
         pdf_path = pdf_export(transcript.text, transcript.sentiment_analysis, filler_list, ai_feedback, wpm)
         if pdf_path:
@@ -221,73 +215,73 @@ def process_audio(audio_bytes, audience, language_style, feedback_length):
 
     return pdf_path
 
-def process_posture_frame(frame, pose, mp_pose, mp_drawing, classifier):
-    image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = pose.process(image)
-    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-    posture_status = "No Pose Detected"
-
-    if results.pose_landmarks:
-        mp_drawing.draw_landmarks(
-            image,
-            results.pose_landmarks,
-            mp_pose.POSE_CONNECTIONS,
-            mp_drawing.DrawingSpec(color=(245, 117, 66), thickness=2, circle_radius=2),
-            mp_drawing.DrawingSpec(color=(245, 66, 230), thickness=2, circle_radius=2)
-        )
-
-        landmarks = results.pose_landmarks.landmark
-        landmark_list = []
-        for lm in landmarks:
-            landmark_list.extend([lm.x, lm.y, lm.z])
-
-        if classifier:
-            try:
-                input_data = pd.DataFrame([landmark_list])
-                prediction = classifier.predict(input_data)
-                posture_status = str(prediction[0])
-            except Exception:
-                posture_status = "Prediction error"
+def analyze_posture_from_image(image_file, pose, mp_pose, mp_drawing, classifier):
+    try:
+        image = Image.open(image_file)
+        image_np = np.array(image)
+        
+        if len(image_np.shape) == 3 and image_np.shape[2] == 3:
+            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
         else:
-            posture_status = "Classifier not available"
+            image_bgr = image_np
+        
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        results = pose.process(image_rgb)
+        
+        annotated_image = image_bgr.copy()
+        posture_status = "No Pose Detected"
+        
+        if results.pose_landmarks:
+            mp_drawing.draw_landmarks(
+                annotated_image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
+                mp_drawing.DrawingSpec(color=(245, 117, 66), thickness=2, circle_radius=2),
+                mp_drawing.DrawingSpec(color=(245, 66, 230), thickness=2, circle_radius=2)
+            )
+            
+            landmarks = results.pose_landmarks.landmark
+            landmark_list = []
+            for lm in landmarks:
+                landmark_list.extend([lm.x, lm.y, lm.z])
+            
+            if classifier:
+                try:
+                    input_data = pd.DataFrame([landmark_list])
+                    prediction = classifier.predict(input_data)
+                    posture_status = str(prediction[0])
+                except Exception as e:
+                    posture_status = f"Prediction error: {str(e)}"
+            else:
+                posture_status = "Classifier not available"
+            
+            cv2.putText(annotated_image, posture_status, (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        else:
+            cv2.putText(annotated_image, "No Pose Detected", (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        
+        annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
+        return annotated_image_rgb, posture_status
+        
+    except Exception as e:
+        st.error(f"Error processing image: {str(e)}")
+        return None, f"Error: {str(e)}"
 
-        cv2.putText(image, str(posture_status), (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    else:
-        cv2.putText(image, "No Pose Detected", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-    return image, posture_status
-
-class PostureVideoProcessor(VideoProcessorBase):
-    def __init__(self, pose_model, mp_pose_solutions, mp_drawing_utils, classifier):
-        self.pose = pose_model
-        self.mp_pose = mp_pose_solutions
-        self.mp_drawing = mp_drawing_utils
-        self.classifier = classifier
-        self.posture_status = "Initializing..."
-        st.session_state.current_posture_status = self.posture_status
-
-    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        img = frame.to_ndarray(format="bgr24")
-        processed_frame, self.posture_status = process_posture_frame(
-            img, self.pose, self.mp_pose, self.mp_drawing, self.classifier
-        )
-        st.session_state.current_posture_status = self.posture_status
-        return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
+pose, mp_pose = load_pose_model()
+mp_drawing = mp.solutions.drawing_utils
+classifier = load_posture_classifier()
 
 st.title("Orate AI")
 
 with st.sidebar:
     if os.path.exists("logo.png"):
-        st.image("logo.png", width=300)
+        st.image("logo.png", width=250)
 
     st.markdown("---")
     st.subheader("Settings")
     audience = st.text_input("Target Audience", placeholder="e.g., Business professionals")
     language_style = st.selectbox("Language Style", ["Understandable", "Scientific"])
     feedback_length = st.selectbox("Feedback Length", ["Summarised(200 words)", "Detailled(1000 words)"])
+    
     st.markdown("---")
     st.subheader("Quick Tips")
     tip_choice = st.radio("Select tip:", ["Posture", "Tone", "Confidence"], label_visibility="collapsed")
@@ -298,28 +292,26 @@ with st.sidebar:
     else:
         st.info("Practice deep breathing before you speak to calm nerves.")
 
+    st.markdown("---")
+
     if st.button("Logout", use_container_width=True):
         st.session_state.authenticated = False
         st.rerun()
 
-pose, mp_pose = load_pose_model()
-mp_drawing = mp.solutions.drawing_utils
-classifier = load_posture_classifier()
+col1, col2 = st.columns(2)
 
-col_audio, col_video = st.columns([1, 1])
-
-with col_audio:
+with col1:
     st.subheader("Audio & Analysis Controls")
     audio_bytes = audio_recorder(
         text="Click to record",
         recording_color="#e74c3c",
         neutral_color="#3498db",
-        icon_size="3x",
+        icon_size="2x",
     )
 
     if audio_bytes:
         st.audio(audio_bytes, format="audio/wav")
-
+        
         if st.button("Analyze Speech", type="primary", use_container_width=True):
             try:
                 pdf_path = process_audio(audio_bytes, audience, language_style, feedback_length)
@@ -330,35 +322,38 @@ with col_audio:
                 st.error(f"Analysis error: {str(e)}")
                 st.info("Your results may still be visible below if transcription completed.")
 
-    st.markdown("---")
-
-with col_video:
+with col2:
     st.subheader("Real-time Posture Detection")
-
-    processor_factory = lambda: PostureVideoProcessor(
-        pose, mp_pose, mp_drawing, classifier
-    )
-
-    webrtc_ctx = webrtc_streamer(
-        key="posture-stream",
-        video_processor_factory=processor_factory,
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True,
-    )
-
-    status_container = st.empty()
-    if webrtc_ctx.state.playing:
-        status_container.markdown(f"**Current Posture:** **{st.session_state.current_posture_status}**")
-    else:
-        status_container.info("Click 'Start' above to begin posture detection.")
     
+    posture_image = st.camera_input("Capture your posture")
+    
+    if posture_image is not None:
+        if 'last_posture_image' not in st.session_state or st.session_state.last_posture_image != posture_image:
+            st.session_state.last_posture_image = posture_image
+            with st.spinner("Analyzing posture..."):
+                annotated_img, posture_result = analyze_posture_from_image(
+                    posture_image, pose, mp_pose, mp_drawing, classifier
+                )
+                
+                if annotated_img is not None:
+                    st.session_state.posture_result = posture_result
+                    st.session_state.posture_image = annotated_img
+        
+        if st.session_state.posture_result:
+            if "Good" in st.session_state.posture_result or "good" in st.session_state.posture_result:
+                st.success("**Perfect posture!**")
+            elif "No Pose" in st.session_state.posture_result:
+                st.info("Click 'Start' above to begin posture detection.")
+            else:
+                st.error("**Needs Improvement** - Keep your back and neck straight. Avoid bending or slouching.")
 
 if st.session_state.transcript_text:
     st.markdown("---")
     st.subheader("Analysis Results")
+    
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Words Per Minute (WPM)", st.session_state.wpm)
+        st.metric("Words Per Minute", st.session_state.wpm)
     with col2:
         st.metric("Word Count", len(st.session_state.transcript_text.split()))
     with col3:
@@ -374,7 +369,7 @@ if st.session_state.transcript_text:
     with tab_sentiment:
         if st.session_state.sentiment_results:
             for result in st.session_state.sentiment_results:
-                st.markdown(f"**\"{result.text}\"** -> **{result.sentiment}** ({result.confidence * 100:.1f}%)")
+                st.markdown(f'**"{result.text}"** → **{result.sentiment}** ({result.confidence*100:.1f}%)')
         else:
             st.info("No sentiment data available")
 
@@ -397,7 +392,8 @@ if st.session_state.transcript_text:
                 data=f,
                 file_name=os.path.basename(st.session_state.pdf_path),
                 mime="application/pdf",
-                use_container_width=True
+                use_container_width=True,
+                type="primary"
             )
     elif st.session_state.transcript_text:
         st.info("PDF generation encountered an issue, but you can copy the results above.")
