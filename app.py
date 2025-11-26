@@ -169,51 +169,58 @@ def pdf_export(transcript, sentiment_results, filler_data, ai_feedback, wpm):
         return None
 
 def process_audio(audio_bytes, audience, language_style, feedback_length):
-    audio_file = "temp_audio.wav"
-    with open(audio_file, "wb") as f:
-        f.write(audio_bytes)
+    audio_file = f"temp_audio_{int(time.time())}.wav"
+    
+    try:
+        with open(audio_file, "wb") as f:
+            f.write(audio_bytes)
 
-    config = aai.TranscriptionConfig(
-        speech_model=aai.SpeechModel.best,
-        sentiment_analysis=True,
-        word_boost=["um", "uh", "like", "you know"],
-        boost_param="high"
-    )
+        config = aai.TranscriptionConfig(
+            speech_model=aai.SpeechModel.best,
+            sentiment_analysis=True,
+            word_boost=["um", "uh", "like", "you know"],
+            boost_param="high"
+        )
 
-    with st.spinner("Transcribing audio..."):
-        transcriber = aai.Transcriber(config=config)
-        transcript = transcriber.transcribe(audio_file)
+        with st.spinner("Transcribing audio..."):
+            transcriber = aai.Transcriber(config=config)
+            transcript = transcriber.transcribe(audio_file)
 
-    if transcript.status == "error":
-        st.error(f"Transcription error: {transcript.error}")
-        return None
+        if transcript.status == "error":
+            st.error(f"Transcription error: {transcript.error}")
+            return None
 
-    wpm = calculate_wpm(transcript.text, transcript.audio_duration)
-    st.session_state.wpm = wpm
+        wpm = calculate_wpm(transcript.text, transcript.audio_duration)
+        st.session_state.wpm = wpm
 
-    filler_list = []
-    for word in transcript.words:
-        if word.text.lower() in ["um", "uh", "like", "you know"]:
-            time_sec = round(word.start / 1000, 2)
-            filler_list.append({"text": word.text, "time": time_sec})
+        filler_list = []
+        for word in transcript.words:
+            if word.text.lower() in ["um", "uh", "like", "you know"]:
+                time_sec = round(word.start / 1000, 2)
+                filler_list.append({"text": word.text, "time": time_sec})
 
-    with st.spinner("Getting AI feedback..."):
-        ai_feedback = send_google(transcript.text, audience, language_style, feedback_length)
+        with st.spinner("Getting AI feedback..."):
+            ai_feedback = send_google(transcript.text, audience, language_style, feedback_length)
 
-    st.session_state.transcript_text = transcript.text
-    st.session_state.sentiment_results = transcript.sentiment_analysis
-    st.session_state.filler_list = filler_list
-    st.session_state.ai_feedback = ai_feedback
+        st.session_state.transcript_text = transcript.text
+        st.session_state.sentiment_results = transcript.sentiment_analysis
+        st.session_state.filler_list = filler_list
+        st.session_state.ai_feedback = ai_feedback
 
-    with st.spinner("Generating PDF report..."):
-        pdf_path = pdf_export(transcript.text, transcript.sentiment_analysis, filler_list, ai_feedback, wpm)
-        if pdf_path:
-            st.session_state.pdf_path = pdf_path
+        with st.spinner("Generating PDF report..."):
+            pdf_path = pdf_export(transcript.text, transcript.sentiment_analysis, filler_list, ai_feedback, wpm)
+            if pdf_path:
+                st.session_state.pdf_path = pdf_path
 
-    if os.path.exists(audio_file):
-        os.remove(audio_file)
-
-    return pdf_path
+        return pdf_path
+        
+    finally:
+        try:
+            if os.path.exists(audio_file):
+                time.sleep(0.5)
+                os.remove(audio_file)
+        except Exception as e:
+            pass
 
 def analyze_posture_from_image(image_file, pose, mp_pose, mp_drawing, classifier):
     try:
